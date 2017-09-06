@@ -1,0 +1,7 @@
+def testingDir = 'testing'
+def absolutePath = rootDir.getAbsolutePath()
+def testModules = new File(absolutePath + '/' + testingDir).list()
+                                .each {println it}
+                                .collect{testingDir + ':'+it} as String[]
+include testModules
+

@@ -1,0 +1,17 @@
+buildscript{
+    ext.testegrationVersion = '0.0.2-beta'
+}
+
+subprojects {
+    apply plugin: 'java'
+    sourceCompatibility = 1.8
+    repositories { mavenCentral() }
+
+    dependencies {
+
+        compileOnly 'org.projectlombok:lombok:1.16.14'
+
+        testCompile 'com.google.guava:guava:21.0'
+        testCompile 'org.assertj:assertj-core:3.7.0'
+    }
+}
