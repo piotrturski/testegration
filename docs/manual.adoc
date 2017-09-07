@@ -1,0 +1,399 @@
+:wip: [[ Work in progress: To be documented... ]]
+:lib: Testegration
+:package: net.piotrturski.testegration
+:version: 0.0.2-beta
+
+:toc:
+
+# {lib} Reference Documentation
+
+# Maven coordinates
+
+Pick the module you need:
+
+[source,groovy,subs="attributes"]
+----
+testCompile 'net.piotrturski.testegration:core:{version}'
+testCompile 'net.piotrturski.testegration:postgres:{version}'
+----
+- core: provides lifecycle, yaml, docker
+- postgres: includes core and provides postgres supoprt
+
+# API status
+
+Currently {lib} is marked as beta. It doesn't mean it's unstable.
+It means that API is most probably going to change.
+However, if you follow our guides and encapsulate the usage of our API, any changes
+should affect only one of your classes.
+
+# Objectives
+
+{lib} aims to allow
+easy to set-up,
+ debuggable, fast, hassle-free, local integration tests on jvm.
+
+# How does {lib} work?
+## Basics
+
+The core concept in {lib} is `Definition` class.
+It provides a lifecycle that aims to be flexible enough to describe most popular
+integration test environments.
+And it lets you provide your actions for each phase of this lifecycle.
+
+Once you specified all the desired behavior, you can run such definition before each
+test and expect your environment to be ready for that test.
+One important strength of provided API is ability to group definitions for a few phases.
+Such building blocks are called `PartialDefinition`. Why it's so cool? Because it lets
+you quickly build the definition of your testing environment by composing those blocks.
+For example imagine you have two blocks: a block that starts any docker container and
+a block that controls state of database of some specific vendor.
+In this case you might be able to define your whole testing environment in a few
+lines of code.
+
+
+And what if you don't like some very specific behavior of one of those building blocks?
+Then you can still use it with adding your logic or you can completely remove or replace
+some parts of it.
+
+And that's exactly what {lib} is trying to achieve.
+
+## API
+
+`Definition` class has plenty of methods but they all fall into a few categories listed below.
+Most of those methods accept an action. This action will be fired at the specific lifecycle phase.
+Most of those actions will receive some input: `RuntimeStore` and/or configuration. Or `EnvironmentRuntime`
+that encapsulates both of them. `RuntimeStore` is a simple key-value store that allows you pass objects
+between different lifecycle phases. Configuration will be described below.
+
+Configuration::
+
+`configure` - action provided to this method will be called only once per the test suite.
+It can return any object. Returned object will be available to all other actions.
+Currently the configure action cannot be applied using `PartialDefinition`.
+
+[source, java]
+----
+Definition<MyConfig> def =
+               Definition.<MyConfig>of()
+                         .configure(() -> ...)        // return MyConfig
+                         .configure(runtimeStore -> { // or put anything into store
+                                       return ...     // and return MyConfig
+                                    })
+----
+
+
+Naming::
+
+`label` - if you have only one definition, you can skip this.
+Otherwise each `Definition` (representing different environment) must have different label.
+Label can be any object implement hashcode and equals.
+Currently the label cannot be applied using `PartialDefinition`.
+
++
+Label is used to compare environments (like `hashCode` and `equals`).
+Thanks to labels it doesn't matter if you create only one instance of `Definition`
+and store it inside static variable or you create new instance at each 'before test'
+method execution.
+
+Lifecycle modification::
+
+lifecycle phase + (`ε | prepend | append`)
++
+Examples: `postConfigurePrepend`, `buildSchema`
+
++
+Let's you modify a specific phase. You can append or prepend your action to already
+specified actions for that phase or completely replace all actions.
+
++
+Usage:
++
+[source, java]
+----
+Definition.of()
+          .buildSchemaAppend(runtimeStore -> {
+                Flyway flyway = new Flyway();
+                flyway.setDatasource(runtimeStore.getShared("datasource"));
+                flyway.migrate();
+          });
+----
+
+Partial definition::
+
+First `PartialDefinition` is simply a group of operations that will be
+applied to `Definition`.
+It's just a functional interface with the method:
++
+[source, java]
+----
+void configure(Definition<Config> definition)
+----
++
+For example this is a valid `PartialDefinition`:
++
+[source, java]
+----
+PartialDefinition partial = definition -> definition
+                             .buildSchemaAppend(...)
+                             .postConfigurePrepend(...);
+----
+
++
+`with` - modifies the lifecycle according to all the definitions inside the provided
+`PartialDefinition`.
++
+[source, java]
+----
+Definition.of()
+          .with(partial)
+----
++
+`withC` - applies all the definitions inside `PartialDefinition` returned by a function
+taking configuration as an input. {wip}
+
+
+Execution::
+
+`run` -
+Using the provided `Definition` it prepares testing environment for the next test.
+So you have to call this method before each test.
+You also need to run this method before your testing framework needs the working environment.
+For example, in case of spring-test and JUnit,
+spring's context is created before any `@Before` method,
+therefore this method should also be called at `@BeforeClass`.
+This method returns an object that lets you access `RuntimeStore` and configuration.
+
++
+You don't have to define environment once and then call `run` many times on the same
+`Definition` object.
+Environments are cached by label.
+So for convenience you can encapsulate
+environment definition and running in a method that
+will be called before each test.
+
+## Lifecycle
+
+configure::
+here you can read / build and expose your configuration to other lifecycle methods.
+
+post configure:: good place to announce your configuration to your testing framework
+
+connection check::
+your action should check if your environment is available and throw exception if not.
+Remember to clean after yourself - free all not needed resources.
+
+start environment::
+your action should start your environment here.
+And this environment should be detected by your `connection check` action.
+This action won't be executed if `connection check` phase found some connection.
+
+full clean::
+after you connected to some environment, it may it may contain any garbage.
+This is the right place to completely clean it.
+
+build schema::
+this is a place where you can provision your environment:
+create all the structures required by your application.
+
+reset::
+this is the only phase that is executed at every single `run` call.
+Use it to clean environment after previous test.
+
+close connector::
+this is your chance to release any resources before your environment shutdown.
+
+stop environment::
+your action should stop your environment started at `start environment` phase.
+This action won't be executed if `start environment` wan't executed.
+
+# Out-of-the-box support
+
+The `Definition` API can be used to define most of integration
+testing scenarios (see <<DynamoDB>> example), although sometimes it won't be trivial.
+That's why {lib} comes with comprehensive support for some technologies.
+Higher level building blocks can be composed to easily setup the environment you need.
+If you don't like some actions provided by those predefined blocks, you can always
+modify them using standard `Definition` methods.
+
+The plan is to continuously add support for popular
+tools in future versions of {lib}.
+
+## Yaml config
+
+[source,java]
+----
+ConfigLoader.fromYaml(clazz, filename)
+----
+will return a supplier (that can be used in a `configure` phase).
+That supplier reads `filename.yml` file and deserializes it to class `clazz` using jackson.
+If file is missing, empty or some property is missing, object with default value will be returned.
+It's advised to use a no-arg constructor or otherwise ensure that class can be
+instantiated even if there is no properties in a file.
+
+The default file location is `${user.home}/.config/testegration/`
+but you can override it by setting `testegration` environment variable to some
+other directory.
+
+## Docker
+[source,java]
+----
+Docker.run(command)
+----
+returns `PartialDefinition` that uses docker container with specified options
+and later stops the started container.
+It appends to `start environment` and `stop environment` phases.
+
+The command should contain all the options that can be provided to the
+`docker run` command, e.g
+
+[source, java]
+----
+Docker.run("--name my_dynamo -p 7777:7777 tray/dynamodb-local -inMemory -port 7777")
+----
+Requires docker 1.13.0+ and ability to run `docker run` without `sudo`.
+
+
+## Postgres
+
+[source, java]
+----
+Postgres.docker("my-project", "9.6.1")
+----
+returns a `Definition` with appended actions:
+
+- read a configuration from `my-project.yml` and deserialize it to `PostgresConf` class.
+Therefore you can change the default port, user etc, in case you have your own postgres installed
+or the default port already used.
+- name the environment `my-project`
+- if needed start docker with postgres in version `9.6.1` and place "my-project" in the container's name.
+The postgres will run on default or configured port. The docker will be stopped after tests
+- checks if postgres is ready using port, user, schema etc specified in `PostgresConf` or overridden
+by yml file.
+- provides empty tables before each test
+
+That's all you need to test a typical application that do its own migrations
+(like a sprong-boot integration tests with flyway or liquibase).
+If you run tests without any framework that does the migrations for you, you need to add
+you migrations to `build schema` phase.
+
+If you want to reuse this whole definition in your own configuration, it's provided
+(except configuration and naming - due to current limitations) in:
+
+[source, java]
+----
+Postgres.dockerPartial(String projectName, String postgresVersion)
+----
+It returns a function that accepts `PostgresConf` and returns `PartialDefinition`.
+
+If actions provided by our defaults are not enough for you, you can run your own sql queries
+using:
+
+[source, java]
+----
+Postgres.execute(PostgresConf conf, String... commands)
+----
+
+# Usage
+
+## Complete example
+
+## Development mode
+
+Although provided defaults are designed to perform as little operations as possible and
+optimize time required to run multiple tests,
+still environment needs to be started once. During the development it's a waste of time.
+To avoid it, just start your environment manually (e.g. copy paste the docker command-line).
+This way your tests will always connect to already existing environment and will not stop it
+after tests are finished. So it will be ready for the next testing cycle.
+
+Still the `full clean` and 'build schema' phases will be triggered.
+That's usually what you want when you work intensively or changing the schema.
+If you want to disable those phases (e.g. while working on DML code only)
+you have to do it programmatically on your own,
+there is no out-of-the-box support for that... yet.
+
+## Multiple environments
+
+If some of your integration tests require more than one external system (e.g. LDAP and db),
+you should simply create two different `Definition` object (named differently)
+and run each `Definition` before the test that requires it.
+
+## Mixed case: framework and standalone tests
+
+# Code samples
+
+In this repo you can find complete, working sources.
+All the examples run on
+link:https://travis-ci.org/piotrturski/testegration[travis],
+can be run from IDE or local command-line. Just like any other tests.
+
+Most of those tests uses Spring and JUnit, but they show the general idea
+about how to configure tests using any dependency injection (DI) framework,
+no DI framework at all,
+any testing tool and any DB migration framework.
+
+In case you use this tool in a completely different stack,
+feel free to notify us about it. It may be worth publishing in this doc.
+
+### Spring boot, flyway, hibernate
+
+This is one of the most standard configuration.
+link:../testing/spring-hibernate-flyway/[
+Here] you can find full application with Spring's integration tests.
+
+In this example Spring takes care about running Flyway's migrations
+so our Definition doesn't need it.
+
+Of course it's not the only way of connecting {lib} with Spring tests.
+Another way would be to provide test dataSource in tests.
+That test datasource would `run` the `Definition` before creation.
+
+### Spring Data, db only tests
+
+link:../testing/jpa-spring-data/[Here]
+you will see spring boot running jpa-only integration tests.
+Including spring-data repositories.
+
+### Spring boot, flyway, jdbcTemplate
+
+link:../testing/jdbc-flyway/[Here] you'll find Spring's app that uses
+jdbcTemplate to achieve some more complex behavior.
+You'll find two types of tests:
+
+- Spring's integration tests.
+With similar setup as in spring-hibernate example.
+- Standalone tests.
+They don't create spring context and therefore start much faster.
+
+//### Spring boot, liquibase, hibernate
+//{wip}
+
+### TestNg, flyway
+
+link:../testing/postgres-testng/[Here]
+you'll find sample of standalone TestNg test with flyway.
+
+### DynamoDB
+
+There is no out-of-the-box support for DynamoDB (yet). Let's see how you
+can test it.
+
+{wip}
+
+# Planned features
+
+Depending on the demand (link:https://docs.google.com/forms/d/e/1FAIpQLSd-p04aQBLho68yg-LtYgik0U6W9x2gjD-VEt1x2mEIU0Wb-w/viewform?usp=sf_link[votes]),
+there is planned out-of-the-box support for:
+
+- Running application locally with development storage
+- Docker with `sudo`
+- Docker Compose
+- Oracle Database
+- MySql
+- MsSql
+- MongoDB
+- DB2
+- Redis
+- Elasticsearch
+- Vagrant
+

@@ -1,0 +1,174 @@
+ifdef::env-github,env-browser[:outfilesuffix: .adoc]
+:lib: Testegration
+:package: net.piotrturski.testegration
+:version: 0.0.2-beta
+
+#  {lib}: Integration Testing for Java
+
+image:https://maven-badges.herokuapp.com/maven-central/{package}/core/badge.svg[Maven Central,
+link=https://maven-badges.herokuapp.com/maven-central/{package}/core]
+image:https://travis-ci.org/piotrturski/testegration.svg?branch=master["Build Status",
+link="https://travis-ci.org/piotrturski/testegration"]
+image:https://img.shields.io/badge/docs-work_in_progress-orange.svg[docs,
+link=docs/manual.adoc]
+
+
+Powerful & flexible testing lifecycle + opinionated defaults. +
+<<docs/manual#,Reference documentation>>
+
+### Integration tests made easy
+No more:
+
+- manual DB installation, setup or cleanup for local development
+- single testing db shared between many devs
+- separate db migrations and hibernate configuration for production and in-memory db
+- untested stored procedures and committed transactions (due to always-rollback policy)
+- problems with testing other kinds of storage (NoSQL, LDAP, search engine, queue, distributed FS, you name it)
+- command line only tests that are painful to debug
+
+### How would you test it?
+
+Let's have a look at a typical repository that uses a little
+bit more complex sql than all hello-world examples.
+It's a typical spring-boot application with postgres and flyway.
+
+.Application.java
+[source,java]
+----
+@Repository class Repo {
+    @Autowired JdbcTemplate jdbcTemplate;
+
+    /** fails at first batch containing null */
+    public void save_ints_in_batches_by_two(List<Integer> ints) {
+        jdbcTemplate.batchUpdate("insert into some_table values (?)", ints, 2,
+                                                            (ps, value) -> ps.setInt(1, value));
+    }
+
+    public int count() {return jdbcTemplate.queryForObject("select my_count()", Integer.class);}
+}
+
+@SpringBootApplication public class Application {
+	public static void main(String[] args) {SpringApplication.run(Application.class, args);}
+}
+----
+
+.V1__first_table.sql
+[source,sql]
+----
+create table some_table (field integer not null);
+----
+
+.V2__function_and_data.sql
+[source,sql]
+----
+-- this function just counts rows of some_table
+CREATE FUNCTION my_count() RETURNS bigint AS $$ select count(1) from some_table; $$ LANGUAGE sql;
+
+-- we often need some starting data. e.g. dictionaries
+insert into some_table values (2);
+----
+
+- You can't test it using in-memory db - sql syntax won't match.
+You need some real db to be started and prepared
+- You can't test it using auto rollback as this code uses commits.
+
+#### How would an ideal test look like?
+
+Maybe we would like to write something like this:
+
+[source,java]
+----
+@SpringBootTest @RunWith(SpringRunner.class)
+public class RepoTest {
+    @Autowired Repo repo;
+
+    @Test public void should_insert_all_values() {
+        repo.save_ints_in_batches_by_two(Arrays.asList(1,2,3,4,5));
+
+        int count = repo.count();
+        assertThat(count).isEqualTo(5);
+    }
+
+    @Test public void should_fail_on_batch_containing_null() {
+        assertThatCode(()->
+                    repo.save_ints_in_batches_by_two(Arrays.asList(1,2,3,null,5))
+            ).hasCauseInstanceOf(Exception.class);
+
+        int count = repo.count();
+        assertThat(count).isEqualTo(2);
+    }
+}
+----
+
+Buuut what about installing and starting postgres?
+What about clean-up between tests? What about connection parameters?
+What about...
+
+Yep, you'll need to solve all those problems.
+Using {lib} you'll do it in 20 lines of code.
+
+#### Let's get started
+
+.gradle import
+[source,groovy,subs="attributes"]
+----
+testCompile '{package}:postgres:{version}'
+----
+
+.test base-class
+[source,java,subs="attributes"]
+----
+import {package}.postgres.Postgres;
+...
+Postgres.docker("my-project", "9.6.1").run();
+----
+
+This line will run postgres docker image in version 9.6.1
+(or connect to your local postgres instance if you have one)
+and prepare `test` schema (or other if you override the default).
+
+One more thing is missing. {lib} tries to be framework agnostic so
+we have to connect it to spring-boot and JUnit. In this case we'll do it
+by setting connection parameters as
+system properties and preparing db before each test and before
+building spring context:
+
+.CommonDbTest.java
+[source,java]
+----
+public class CommonDbTest {
+
+    @BeforeClass public static void beforeClass() { prepareDb(); }
+    @Before public void before() { prepareDb(); }
+
+    static void prepareDb() {
+        Postgres.docker("my-project", "9.6.1")
+                .with(exposeDbPropertiesForSpringBoot)
+                .run();
+    }
+
+    static PartialDefinition<PostgresConf> exposeDbPropertiesForSpringBoot = def ->
+                def.postConfigure(runtime ->
+                        ImmutableMap.of(
+                                "spring.datasource.url", runtime.getConfig().getJdbcUrl(),
+                                "spring.datasource.username", runtime.getConfig().user,
+                                "spring.datasource.password", runtime.getConfig().passwd)
+                                .forEach(System::setProperty));
+}
+----
+
+Make your db tests extend `CommonDbTest` and that's it.
+Now you can run your test from IDE, console or CI server.
+
+To fully understand what's going on, check <<docs/manual#,documentation>>.
+You will find out that similar strategy applies to other
+testing frameworks, non-spring environments or non-db storage types.
+
+### Free for small projects
+
+It's free for up to 20 calls per build. Even for commercial use.
+So you can:
+
+- quickly start a project that requires storage tests
+- easily evaluate if {lib} is a good fit for your existing project of any size
+- use it for your studies or pet projects
