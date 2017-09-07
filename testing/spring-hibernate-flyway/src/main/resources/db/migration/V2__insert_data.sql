@@ -1,0 +1,1 @@
+insert into sample_entity values (2);
