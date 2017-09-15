@@ -16,27 +16,72 @@ link=docs/manual.adoc]
 Powerful & flexible testing lifecycle + opinionated defaults. +
 <<docs/manual#,Reference documentation>>
 
-### Integration tests made easy
 
-How much code do you need to have your db ready for first test?
-
-----
-Postgres.docker("my-project", "9.6.1").run();
-----
-
-That's it. No maven or gradle custom scripting, no plugins, everything works from an IDE.
-
-And how much code do you need to revert all the commits before the second tests?
-----
-Postgres.docker("my-project", "9.6.1").run();
-----
-
-And how long will it take?
+### Slow DB tests?
 
 image::big.gif[]
 
-And what if there wasn't any db running?
-One would be started automatically before the first test
-so you would have to wait ~5s longer.
+#### How much code do I need before each test?
 
-video::idea1.mp4[options="nocontrols,autoplay"]
+----
+Postgres.docker("my-project", "9.6.1").run();
+----
+
+#### How much code do I need to setup DB before first test?
+
+None
+
+#### Maven or gradle scripting? IDE plugins?
+
+Nope. You run it just like any other unit test.
+
+#### Do I have to rollback after each test?
+
+Nope, do as many commits as you need.
+
+#### Do I need my DB up and running before running tests?
+
+Nope, it will be started.
+
+#### Where is this DB? What's the url, user, passwd?
+
+Default values (check the docs).
+
+#### I can't use those default values on my local machine
+
+You can change them without modifying the code.
+
+#### So how will I pass those values to my framework?
+
+{lib} tries to be framework agnostic.
+All the configuration is exposed in the object returned by `run()`.
+You will pass it to your framework in any way you want.
+
+- If your tests use plain Connection or DataSource,
+you'll build it manually using exposed values.
+
+- If you use Spring Boot integration testing, you can e.g. expose those values
+as environment variables or replace the DataSource
+
+#### I use some very specific DB operation. Your library doesn't do that.
+
+The lifecycle is designed to be pretty flexible.
+If you need some additional behavior, you can add it.
+If you don't like some of the default behaviour, you can remove it.
+
+#### I use DB migrations. Is it supported?
+
+{lib} doesn't care what operations you do on your DB.
+If your framework runs them automatically (Spring Boot), you need nothing more.
+If you create standalone tests and you need to run your migrations manually,
+you can add this operation to specific phase of {lib}'s lifecycle so
+it will run when needed.
+
+#### Only databases are supported?
+
+{lib} intents to let you test any external environment,
+although sometimes it may be non-trivial task to do it efficiently.
+That's why
+
+there is some out-of-the-box support for some widely used technologies
+(docker, postgres)
