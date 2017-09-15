@@ -33,5 +33,10 @@ Postgres.docker("my-project", "9.6.1").run();
 
 And how long will it take?
 
+image::big.gif[]
+
+And what if there wasn't any db running?
+One would be started automatically before the first test
+so you would have to wait ~5s longer.
 
 video::idea1.mp4[options="nocontrols,autoplay"]
